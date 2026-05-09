@@ -1,17 +1,13 @@
 [package]
 name = "sandbox_core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Threading",
-]}
+# No external dependencies - pure std lib for maximum compatibility
 
 [profile.release]
 opt-level = 3

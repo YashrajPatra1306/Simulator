@@ -1,377 +1,184 @@
 using System;
 using System.Drawing;
-using System.IO;
-using System.Text;
 using System.Windows.Forms;
 
-namespace SandboxEngine;
-
-/// <summary>
-/// FPS calculator using rolling 30-frame average for stable display.
-/// </summary>
-public class FpsCalculator
+namespace SandboxEngine
 {
-    private const int FrameCount = 30;
-    private readonly long[] _timestamps = new long[FrameCount];
-    private int _currentIndex = 0;
-    private int _frameCount = 0;
-    
-    /// <summary>
-    /// Record a frame timestamp and return current FPS.
-    /// </summary>
-    public float RecordFrame()
+    public class FpsCalculator
     {
-        long now = DateTime.UtcNow.Ticks;
-        _timestamps[_currentIndex] = now;
-        _currentIndex = (_currentIndex + 1) % FrameCount;
-        
-        if (_frameCount < FrameCount)
-            _frameCount++;
-        
-        // Calculate average FPS over available frames
-        if (_frameCount < 2)
-            return 0.0f;
-        
-        long oldest = _timestamps[_currentIndex]; // Next index to overwrite is oldest
-        long newest = _timestamps[(_currentIndex + FrameCount - 1) % FrameCount];
-        
-        // Find actual oldest timestamp among recorded frames
-        long minTime = long.MaxValue;
-        long maxTime = long.MinValue;
-        for (int i = 0; i < _frameCount; i++)
+        private readonly long[] _timestamps = new long[30];
+        private int _currentIndex;
+        private int _frameCount;
+
+        public void RecordFrame()
         {
-            if (_timestamps[i] < minTime) minTime = _timestamps[i];
-            if (_timestamps[i] > maxTime) maxTime = _timestamps[i];
+            long now = DateTime.UtcNow.Ticks / 10000; // Convert to ms
+            _timestamps[_currentIndex] = now;
+            _currentIndex = (_currentIndex + 1) % _timestamps.Length;
+            if (_frameCount < _timestamps.Length) _frameCount++;
         }
-        
-        long elapsedTicks = maxTime - minTime;
-        if (elapsedTicks <= 0)
-            return 60.0f;
-        
-        double elapsedSeconds = elapsedTicks / (double)TimeSpan.TicksPerSecond;
-        float fps = (_frameCount - 1) / (float)elapsedSeconds;
-        
-        return Math.Min(fps, 999.0f); // Cap at 999 for display
-    }
-    
-    /// <summary>
-    /// Reset the calculator.
-    /// </summary>
-    public void Reset()
-    {
-        _currentIndex = 0;
-        _frameCount = 0;
-        Array.Clear(_timestamps, 0, _timestamps.Length);
-    }
-}
 
-/// <summary>
-/// Main canvas control for rendering the sandbox.
-/// Uses double-buffered Windows Forms for smooth rendering.
-/// </summary>
-public class SandboxCanvas : Panel
-{
-    private readonly ToolController _toolController;
-    private readonly BlackHoleController _blackHole;
-    private readonly FpsCalculator _fpsCalc;
-    private Timer _renderTimer;
-    private bool _physicsInitialized;
-    private Point _lastMousePos;
-    private bool _isMouseDown;
-    
-    public SandboxCanvas()
-    {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | 
-                 ControlStyles.UserPaint | 
-                 ControlStyles.DoubleBuffer | 
-                 ControlStyles.OptimizedDoubleBuffer, true);
-        
-        _toolController = new ToolController();
-        _blackHole = new BlackHoleController();
-        _fpsCalc = new FpsCalculator();
-        _renderTimer = new Timer();
-        _physicsInitialized = false;
-        
-        _renderTimer.Tick += OnRenderTick;
-        _renderTimer.Interval = _toolController.GetTimerInterval();
-        
-        MouseDown += OnMouseDown;
-        MouseUp += OnMouseUp;
-        MouseMove += OnMouseMove;
-        Resize += OnResize;
-    }
-    
-    /// <summary>
-    /// Initialize the physics system.
-    /// Call after the control is fully sized.
-    /// </summary>
-    public void Initialize()
-    {
-        if (_physicsInitialized) return;
-        
-        PhysicsInterop.init_physics(Width, Height);
-        _physicsInitialized = true;
-        
-        // Start render loop
-        _renderTimer.Start();
-    }
-    
-    /// <summary>
-    /// Set the current tool.
-    /// </summary>
-    public void SetTool(ToolType tool)
-    {
-        _toolController.CurrentTool = tool;
-    }
-    
-    /// <summary>
-    /// Set the current shape.
-    /// </summary>
-    public void SetShape(ShapeType shape)
-    {
-        _toolController.CurrentShape = shape;
-    }
-    
-    /// <summary>
-    /// Set the current color.
-    /// </summary>
-    public void SetColor(Color color)
-    {
-        _toolController.CurrentColor = color;
-    }
-    
-    /// <summary>
-    /// Set the current size.
-    /// </summary>
-    public void SetSize(float size)
-    {
-        _toolController.CurrentSize = size;
-    }
-    
-    /// <summary>
-    /// Toggle low power mode.
-    /// </summary>
-    public void ToggleLowPowerMode()
-    {
-        _toolController.LowPowerMode = !_toolController.LowPowerMode;
-        _renderTimer.Interval = _toolController.GetTimerInterval();
-    }
-    
-    /// <summary>
-    /// Save scene to file.
-    /// Format: "%d %f %f %f %f %f %f %f %lu %f %f\n"
-    /// (shape x y vx vy radius width height color mass restitution)
-    /// </summary>
-    public void SaveScene(string filePath)
-    {
-        try
+        public double GetFps()
         {
-            using var writer = new StreamWriter(filePath);
-            int maxObjects = PhysicsInterop.get_max_objects();
-            
-            for (int i = 0; i < maxObjects; i++)
+            if (_frameCount < 2) return 0.0;
+
+            long minTime = long.MaxValue, maxTime = long.MinValue;
+            for (int i = 0; i < _frameCount; i++)
             {
-                if (PhysicsInterop.get_object_at(i, out var obj) && obj.active)
-                {
-                    // Format: shape x y vx vy radius width height color mass restitution
-                    writer.WriteLine($"{obj.shape} {obj.x} {obj.y} {obj.vx} {obj.vy} {obj.radius} {obj.width} {obj.height} {obj.color} {obj.mass} {obj.restitution}");
-                }
+                if (_timestamps[i] < minTime) minTime = _timestamps[i];
+                if (_timestamps[i] > maxTime) maxTime = _timestamps[i];
+            }
+
+            long elapsed = maxTime - minTime;
+            if (elapsed <= 0) return 60.0;
+
+            return (_frameCount - 1) * 1000.0 / elapsed;
+        }
+    }
+
+    public class SandboxCanvas : Panel
+    {
+        private bool _physicsInitialized;
+        private readonly Timer _renderTimer;
+        private readonly FpsCalculator _fpsCalc;
+        private readonly ToolController _toolController;
+        private readonly BlackHoleController _blackHole;
+        private readonly Label _statusLabel;
+        private Point _lastMousePos;
+
+        public SandboxCanvas()
+        {
+            DoubleBuffered = false; // We handle double buffering manually with GDI
+            SetStyle(ControlStyles.Opaque, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint, true);
+
+            _fpsCalc = new FpsCalculator();
+            _blackHole = new BlackHoleController();
+
+            _toolController = new ToolController(
+                this,
+                SpawnParticles,
+                AddObject,
+                RemoveObject,
+                () => PhysicsInterop.get_max_objects()
+            );
+
+            MouseDown += OnMouseDown;
+            MouseMove += OnMouseMove;
+            MouseUp += OnMouseUp;
+            Resize += OnResize;
+
+            _renderTimer = new Timer { Interval = 16 };
+            _renderTimer.Tick += OnRenderTick;
+
+            _statusLabel = new Label
+            {
+                Dock = DockStyle.Bottom,
+                Height = 24,
+                BackColor = Color.FromArgb(30, 30, 40),
+                ForeColor = Color.LightGray,
+                Font = new Font("Consolas", 9f),
+                Text = "FPS: 0 | Objects: 0 | Particles: 0 | Tool: Draw"
+            };
+            Controls.Add(_statusLabel);
+        }
+
+        public void Initialize()
+        {
+            if (_physicsInitialized) return;
+            if (Width <= 0 || Height <= 0) return;
+
+            PhysicsInterop.init_physics(Width, Height);
+            _physicsInitialized = true;
+            _renderTimer.Start();
+        }
+
+        private void OnRenderTick(object sender, EventArgs e)
+        {
+            float dt = 0.016f;
+            PhysicsInterop.update_physics(dt);
+
+            var bhPos = PhysicsInterop.get_black_hole_position();
+            _blackHole.Update(bhPos.Item1, bhPos.Item2, _lastMousePos.X, _lastMousePos.Y, dt);
+
+            Invalidate();
+            UpdateStatusLabel();
+        }
+
+        private void OnMouseDown(object sender, MouseEventArgs e) => _toolController.OnMouseDown(sender, e);
+        private void OnMouseMove(object sender, MouseEventArgs e)
+        {
+            _lastMousePos = e.Location;
+            _toolController.OnMouseMove(sender, e);
+        }
+        private void OnMouseUp(object sender, MouseEventArgs e) => _toolController.OnMouseUp(sender, e);
+
+        private void OnResize(object sender, EventArgs e)
+        {
+            if (Width > 0 && Height > 0)
+            {
+                PhysicsInterop.init_physics(Width, Height);
             }
         }
-        catch (Exception ex)
+
+        private void SpawnParticles(float x, float y, int count) => PhysicsInterop.spawn_particles(x, y, count);
+        private int AddObject(float x, float y, int shape, uint color, float size) =>
+            PhysicsInterop.add_object(x, y, shape, color, size);
+        private void RemoveObject(int index) => PhysicsInterop.remove_object(index);
+
+        protected override void OnPaint(PaintEventArgs e)
         {
-            MessageBox.Show($"Failed to save scene: {ex.Message}", "Error", 
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-    
-    /// <summary>
-    /// Load scene from file.
-    /// </summary>
-    public void LoadScene(string filePath)
-    {
-        try
-        {
-            if (!File.Exists(filePath))
+            base.OnPaint(e);
+
+            IntPtr hdc = e.Graphics.GetHdc();
+            try
             {
-                MessageBox.Show("File not found.", "Error", 
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            using var reader = new StreamReader(filePath);
-            string? line;
-            
-            while ((line = reader.ReadLine()) != null)
-            {
-                string[] parts = line.Split(' ');
-                if (parts.Length >= 11)
+                Renderer.ClearBackground(hdc, Width, Height);
+
+                int maxObjects = PhysicsInterop.get_max_objects();
+                for (int i = 0; i < maxObjects; i++)
                 {
-                    int shape = int.Parse(parts[0]);
-                    float x = float.Parse(parts[1]);
-                    float y = float.Parse(parts[2]);
-                    float vx = float.Parse(parts[3]);
-                    float vy = float.Parse(parts[4]);
-                    float radius = float.Parse(parts[5]);
-                    float width = float.Parse(parts[6]);
-                    float height = float.Parse(parts[7]);
-                    uint color = uint.Parse(parts[8]);
-                    float mass = float.Parse(parts[9]);
-                    float restitution = float.Parse(parts[10]);
-                    
-                    int idx = PhysicsInterop.add_object(x, y, shape, color, radius);
-                    if (idx >= 0)
+                    GameObject obj;
+                    if (PhysicsInterop.get_object_at(i, out obj))
                     {
-                        // Note: Additional properties would need setter functions in Rust
-                        // For now, basic creation works
+                        Renderer.RenderObject(hdc, obj);
                     }
                 }
-            }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Failed to load scene: {ex.Message}", "Error", 
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-    
-    private void OnRenderTick(object? sender, EventArgs e)
-    {
-        if (!_physicsInitialized) return;
-        
-        float dt = _toolController.GetDeltaTime();
-        
-        // Update black hole state
-        _blackHole.Update(_lastMousePos.X, _lastMousePos.Y);
-        
-        // Update physics
-        PhysicsInterop.update_physics(dt);
-        
-        // Handle dragging
-        if (_toolController.CurrentTool == ToolType.Move && _isMouseDown)
-        {
-            int dragIdx = _toolController.GetDraggedObjectIndex();
-            if (dragIdx >= 0 && PhysicsInterop.get_object_at(dragIdx, out var obj) && obj.active)
-            {
-                // Directly set position - would need Rust API enhancement for proper implementation
-            }
-        }
-        
-        // Invalidate to trigger paint
-        Invalidate();
-    }
-    
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-        
-        if (!_physicsInitialized)
-        {
-            // Draw initialization message
-            string msg = "Initializing...";
-            TextRenderer.DrawText(e.Graphics, msg, Font, ClientRectangle, Color.White, 
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            return;
-        }
-        
-        IntPtr hdc = e.Graphics.GetHdc();
-        
-        try
-        {
-            // Clear background
-            Rectangle rect = ClientRectangle;
-            using var clearBrush = new SolidBrush(Color.FromArgb(20, 20, 30));
-            e.Graphics.FillRectangle(clearBrush, rect);
-            
-            // Render all objects
-            int maxObjects = PhysicsInterop.get_max_objects();
-            for (int i = 0; i < maxObjects; i++)
-            {
-                if (PhysicsInterop.get_object_at(i, out var obj))
+
+                int maxParticles = 2000;
+                for (int i = 0; i < maxParticles; i++)
                 {
-                    Renderer.RenderObject(hdc, obj);
+                    Particle p;
+                    if (PhysicsInterop.get_particle_at(i, out p))
+                    {
+                        Renderer.RenderParticle(hdc, p);
+                    }
                 }
+
+                _blackHole.Render(hdc);
             }
-            
-            // Render all particles
-            int maxParticles = PhysicsInterop.get_max_particles();
-            for (int i = 0; i < maxParticles; i++)
+            finally
             {
-                if (PhysicsInterop.get_particle_at(i, out var particle))
-                {
-                    Renderer.RenderParticle(hdc, particle);
-                }
-            }
-            
-            // Render black hole (if active)
-            _blackHole.Render(hdc);
-        }
-        finally
-        {
-            e.Graphics.ReleaseHdc(hdc);
-        }
-    }
-    
-    private void OnMouseDown(object? sender, MouseEventArgs e)
-    {
-        if (e.Button == MouseButtons.Left)
-        {
-            _isMouseDown = true;
-            _toolController.OnMouseDown(e, Width, Height, out _);
-        }
-        else if (e.Button == MouseButtons.Right)
-        {
-            // Show color picker
-            using var dialog = new ColorDialog();
-            dialog.Color = _toolController.CurrentColor;
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                _toolController.CurrentColor = dialog.Color;
+                e.Graphics.ReleaseHdc(hdc);
             }
         }
-    }
-    
-    private void OnMouseUp(object? sender, MouseEventArgs e)
-    {
-        _isMouseDown = false;
-        _toolController.OnMouseUp();
-    }
-    
-    private void OnMouseMove(object? sender, MouseEventArgs e)
-    {
-        _lastMousePos = e.Location;
-        _toolController.OnMouseMove(e);
-    }
-    
-    private void OnResize(object? sender, EventArgs e)
-    {
-        if (_physicsInitialized && Width > 0 && Height > 0)
+
+        private void UpdateStatusLabel()
         {
-            // Reinitialize physics with new dimensions
-            PhysicsInterop.init_physics(Width, Height);
+            _fpsCalc.RecordFrame();
+            double fps = _fpsCalc.GetFps();
+            int objCount = PhysicsInterop.get_object_count();
+            int partCount = PhysicsInterop.get_particle_active_count();
+            string toolName = _toolController.GetToolName();
+
+            _statusLabel.Text = $"FPS: {fps:F0} | Objects: {objCount} | Particles: {partCount} | Tool: {toolName}";
         }
-    }
-    
-    /// <summary>
-    /// Get status information for display.
-    /// </summary>
-    public string GetStatusInfo()
-    {
-        float fps = _fpsCalc.RecordFrame();
-        int objCount = PhysicsInterop.get_object_count();
-        int particleCount = PhysicsInterop.get_particle_active_count();
-        string toolName = _toolController.GetToolName();
-        
-        return $"FPS: {fps:F0} | Objects: {objCount} | Particles: {particleCount} | Tool: {toolName}";
-    }
-    
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
+
+        protected override void OnHandleDestroyed(EventArgs e)
         {
-            _renderTimer?.Dispose();
+            _renderTimer.Stop();
             Renderer.CleanupGdiCache();
+            base.OnHandleDestroyed(e);
         }
-        base.Dispose(disposing);
     }
 }

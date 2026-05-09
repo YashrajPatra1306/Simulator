@@ -10,19 +10,4 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Include="PhysicsInterop.cs" />
-    <Compile Include="Renderer.cs" />
-    <Compile Include="ToolController.cs" />
-    <Compile Include="BlackHole.cs" />
-    <Compile Include="SandboxCanvas.cs" />
-    <Compile Include="Program.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="sandbox_core.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
 </Project>

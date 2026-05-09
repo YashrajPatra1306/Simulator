@@ -1,227 +1,165 @@
-# Sandbox Rendering Engine
+# Native Windows Sandbox Rendering Engine
 
-A pure native Windows sandbox rendering engine built with **Rust** (physics core) and **C#** (Windows Forms frontend). No web technologies, no Electron, no Chromium - just pure Win32/GDI rendering.
+A pure native Windows application built with **Rust** (physics core) and **C#** (Windows Forms frontend). No web technologies, no Electron, no Chromium - just pure Win32 GDI rendering.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│         C# Windows Forms Frontend           │
-│  - UI, Input, Menu, Toolbar                 │
-│  - GDI Rendering with object caching        │
-│  - P/Invoke to Rust DLL                     │
-└───────────────────┬─────────────────────────┘
-                    │ FFI (C-compatible)
-┌───────────────────▼─────────────────────────┐
-│          Rust Physics Core (DLL)            │
-│  - Spatial hashing (O(n) collision)         │
-│  - Particle system (free-list allocation)   │
-│  - Black hole simulation                    │
-│  - Gaze detection & Hairy Ball effect       │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│     C# Windows Forms Frontend       │
+│  - Input handling, UI, menu system  │
+│  - GDI rendering via P/Invoke       │
+│  - Double-buffered painting         │
+└──────────────┬──────────────────────┘
+               │ P/Invoke FFI
+┌──────────────▼──────────────────────┐
+│      Rust Physics Core (.dll)       │
+│  - Spatial hash grid (O(n) collisions) │
+│  - Particle free-list allocator     │
+│  - Black hole gaze detection        │
+│  - Euler integration physics        │
+└─────────────────────────────────────┘
 ```
 
 ## Features
 
-### Physics Simulation
+### Physics System
 - **Spatial Hash Grid**: O(n) average collision detection using cell-based partitioning
-- **Euler Integration**: Velocity Verlet-style physics with gravity
-- **Elastic Collisions**: Impulse-based resolution with restitution
-- **Boundary Bouncing**: Objects bounce off window edges
+- **Particle System**: Free-list allocator with 2000 particle capacity
+- **Euler Integration**: Gravity, velocity, boundary bouncing with restitution
+- **Elastic Collisions**: Impulse-based resolution with mass conservation
 
-### Particle System
-- **Free-List Allocation**: Efficient particle reuse without garbage collection
-- **High-Water Mark Tracking**: `particleCount` never decrements, preventing skip bugs
-- **Configurable Lifetimes**: Each particle has independent life/max_life
+### Black Hole Simulation
+- **Shapeless Data Point**: Zero render cost when not observed
+- **Gaze Detection**: Activates when mouse within 100px
+- **9-Second Timer**: Hairy Ball Theorem activation
+  - t < 9s: Normal lensing
+  - t = 9s: Singularity point surfaces
+  - Visual effects: Event horizon, accretion ring, photon sphere
 
-### Black Hole (Shapeless Data Point)
-- **Lazy Activation**: Only renders when mouse is within 100px (gaze detection)
-- **Gaze Timer**: 9-second timer triggers Hairy Ball Theorem visualization
-- **Gravitational Pull**: Real inverse-square law force (scaled for visuals)
-- **Visual Effects**:
-  - Event horizon (black circle, scales with gaze)
-  - Accretion glow ring (orange, appears at t > 0.1)
-  - Singularity point (white, appears at t >= 1.0)
+### Rendering
+- **Pure GDI**: Ellipse, Rectangle, Polygon via gdi32.dll
+- **Unified Cache**: One entry per color (brush + pen together)
+- **Double Buffering**: Manual BitBlt-style via GetHdc/ReleaseHdc
+- **Dark Theme**: #141414 background
 
 ### Tools
-- **Draw**: Create objects (Circle, Rect, Triangle, Line)
-- **Move**: Drag objects with mouse
-- **Delete**: Remove objects
-- **Particles**: Spawn particle burst
-- **Force Blast**: Radial impulse (placeholder for future enhancement)
-
-### Performance Optimizations
-- **GDI Object Caching**: One cache entry per color holds both brush AND pen
-- **Double Buffering**: Windows Forms `DoubleBuffered` + custom backbuffer
-- **Rolling FPS Average**: 30-frame circular buffer for stable display
-- **Low Power Mode**: Doubles dt (0.032s), halves timer frequency (32ms)
-
-## Project Structure
-
-```
-/sandbox-engine
-├── rust-core/
-│   ├── Cargo.toml          # Rust crate config (cdylib)
-│   └── src/
-│       └── lib.rs          # Physics, spatial hash, particles, black hole
-├── cs-frontend/
-│   ├── SandboxEngine.csproj
-│   ├── app.manifest        # DPI awareness, Windows 10/11 support
-│   ├── PhysicsInterop.cs   # P/Invoke declarations
-│   ├── Renderer.cs         # GDI rendering with caching
-│   ├── ToolController.cs   # Input handling, tool logic
-│   ├── BlackHole.cs        # Black hole controller
-│   ├── SandboxCanvas.cs    # Main canvas control, FPS calc
-│   └── Program.cs          # Application entry point
-└── build.bat               # Build script (Rust + C#)
-```
-
-## Requirements
-
-- **Windows 10/11 x64**
-- **Rust** (https://rustup.rs/) - for physics core
-- **.NET 8 SDK** (https://dotnet.microsoft.com/) - for C# frontend
-- **Hardware**: Tested on Ryzen 7 4800U, Vega 7 iGPU, 8GB RAM
+- **Draw**: Place shapes (Circle, Rect, Triangle, Line)
+- **Move**: Drag objects (placeholder)
+- **Delete**: Remove objects by clicking
+- **Particles**: Spawn 20 particles with random velocities
+- **Force**: Radial impulse blast
 
 ## Building
 
-### Quick Build
+### Prerequisites
+- **Rust**: `rustup install stable`
+- **.NET 8 SDK**: Download from Microsoft
+- **Windows 10/11 x64**
+
+### Build Steps
 ```batch
 build.bat
 ```
 
-### Manual Build
-
-1. **Build Rust Core**:
+Or manually:
 ```batch
 cd rust-core
 cargo build --release
-copy target\release\sandbox_core.dll ..\cs-frontend\
+
+cd ..\cs-frontend
+dotnet build -c Release
 ```
 
-2. **Build C# Frontend**:
-```batch
-cd cs-frontend
-dotnet restore
-dotnet build --configuration Release
-```
-
-## Running
-
-```batch
-cd cs-frontend
-dotnet run --configuration Release
-```
-
-Or directly execute:
-```
-cs-frontend\bin\Release\net8.0-windows\SandboxEngine.exe
-```
+Output: `cs-frontend\bin\Release\net8.0-windows\SandboxEngine.exe`
 
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| **D** | Draw tool |
-| **M** | Move tool |
-| **X** | Delete tool |
-| **P** | Particles tool |
-| **F** | Force blast tool |
-| **1** | Circle shape |
-| **2** | Rectangle shape |
-| **3** | Triangle shape |
-| **4** | Line shape |
-| **Right-click** | Color picker |
+| D | Draw tool |
+| M | Move tool |
+| X | Delete tool |
+| P | Particles tool |
+| F | Force blast |
+| 1-4 | Change shape (Circle/Rect/Triangle/Line) |
+| Right-click | About dialog |
 
-## File Format
+## Performance
 
-Scene files use plain text format:
-```
-shape x y vx vy radius width height color mass restitution
-```
+Optimized for low-tier laptops (Ryzen 7 4800U, Vega 7 iGPU):
+- **Zero heap allocations** in hot paths
+- **Spatial hashing** reduces collision checks from O(n²) to O(n)
+- **GDI object caching** prevents handle leaks
+- **Particle free-list** reuses dead particles
+- **Lazy black hole rendering** only when observed
 
-Example:
-```
-0 400.0 300.0 0.0 50.0 20.0 20.0 20.0 16711680 1.0 0.8
-1 200.0 150.0 10.0 0.0 30.0 60.0 40.0 65280 2.5 0.7
-```
+## File Structure
 
-Where:
-- `shape`: 0=Circle, 1=Rect, 2=Triangle, 3=Line
-- `color`: COLORREF format (0x00BBGGRR)
+```
+sandbox-engine/
+├── rust-core/
+│   ├── Cargo.toml          # Rust crate config
+│   └── src/lib.rs          # Physics engine (500+ lines)
+├── cs-frontend/
+│   ├── SandboxEngine.csproj
+│   ├── app.manifest        # DPI awareness
+│   ├── Program.cs          # Entry point
+│   ├── PhysicsInterop.cs   # P/Invoke declarations
+│   ├── Renderer.cs         # GDI rendering
+│   ├── ToolController.cs   # Input handling
+│   ├── BlackHole.cs        # Black hole logic
+│   └── SandboxCanvas.cs    # Main canvas
+└── build.bat               # Build script
+```
 
 ## Technical Details
 
 ### Spatial Hash Implementation
 ```rust
-// grid_next field (NOT mass) stores linked list pointer
-objects[i].grid_next = cells[cell_idx];
-cells[cell_idx] = i;
-
-// Traversal
-j = cells[cell_idx];
-while j != -1 {
-    process(j);
-    j = objects[j].grid_next;
-}
-```
-
-### GDI Cache Pattern
-```csharp
-// One entry per color holds BOTH brush and pen
-for (int i = 0; i < cacheCount; i++) {
-    if (cache[i].color == color) {
-        return (cache[i].brush, cache[i].pen);
-    }
-}
-// Miss: create both in single entry
-cache[cacheCount++] = (color, CreateBrush(), CreatePen());
+// Each frame:
+1. Clear all cells to -1
+2. For each active object:
+   - Calculate cell index from position
+   - Set object.grid_next = cells[cell_idx]
+   - Set cells[cell_idx] = object_index
+3. Collision check: iterate 3x3 neighboring cells
+   - Follow linked list via grid_next field
+   - NEVER use mass field for linked list pointers
 ```
 
 ### Particle Free-List
 ```rust
-// Alloc: pop from free stack
-free_count -= 1;
-idx = free_list[free_count];
-particles[idx].active = true;
+// Allocation:
+idx = free_list[free_count--]
+particles[idx].active = true
 
-// Free: push to free stack (with bounds check)
-if free_count < MAX_PARTICLES {
-    free_list[free_count++] = idx;
-    particles[idx].active = false;
+// Deallocation:
+particles[i].active = false
+free_list[free_count++] = i  // Only if free_count < MAX
+
+// Loop bound uses high_water_mark (never decrements)
+for i in 0..high_water_mark {
+    if !particles[i].active { continue }
+    // Update particle
 }
 ```
 
-### Black Hole Gaze Detection
-```rust
-// Mouse proximity check (replace with frustum dot product in 3D)
-let dist = sqrt((mouse_x - bh.x)² + (mouse_y - bh.y)²);
-bh.active = dist < 100.0;
+### GDI Cache
+```csharp
+// Unified brush+pen per color
+Dictionary<uint, (IntPtr brush, IntPtr pen)> cache;
 
-// Timer: increment when active, decay when inactive
-bh.gaze_timer = if active {
-    min(gaze_timer + dt, 9.0)
-} else {
-    max(gaze_timer - dt * 2.0, 0.0)
-};
+GetCached(color):
+  if exists: return cached
+  else: create both, add to cache, return
+  
+Cleanup():
+  DeleteObject(all brushes)
+  DeleteObject(all pens)
+  cache.Clear()
 ```
-
-## Known Limitations
-
-1. **Object Dragging**: Move tool finds objects but doesn't update position in Rust (would need additional FFI setter)
-2. **Force Blast**: Placeholder implementation - velocity changes not applied to Rust side
-3. **Collision Symmetry**: Only updates one object's velocity in pair (future: accumulate impulses)
-4. **Max Capacity**: Hard limits at 1000 objects, 2000 particles
 
 ## License
 
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-Issues and pull requests welcome. Key areas for improvement:
-- Add FFI setters for object properties (velocity, position)
-- Implement proper force blast in Rust core
-- Add more shapes (polygon, star)
-- Implement scene serialization/deserialization in Rust
-- Add camera pan/zoom
+MIT License - Use freely for any purpose.
