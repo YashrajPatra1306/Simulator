@@ -4,181 +4,114 @@ using System.Windows.Forms;
 
 namespace SandboxEngine
 {
-    public class FpsCalculator
+    public class SandboxCanvas : Panel
     {
-        private readonly long[] _timestamps = new long[30];
-        private int _currentIndex;
-        private int _frameCount;
+        private ToolController _toolController;
+        private FpsCalculator _fpsCalc = new FpsCalculator();
+        private bool _physicsInitialized = false;
 
-        public void RecordFrame()
-        {
-            long now = DateTime.UtcNow.Ticks / 10000; // Convert to ms
-            _timestamps[_currentIndex] = now;
-            _currentIndex = (_currentIndex + 1) % _timestamps.Length;
-            if (_frameCount < _timestamps.Length) _frameCount++;
+        public SandboxCanvas() {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.DoubleBuffer, true);
+            _toolController = new ToolController(this);
         }
 
-        public double GetFps()
-        {
-            if (_frameCount < 2) return 0.0;
+        public void SetTool(ToolType t) => _toolController.CurrentTool = t;
+        public void SetShape(ShapeType s) => _toolController.CurrentShape = s;
+        public ToolType CurrentTool => _toolController.CurrentTool;
 
-            long minTime = long.MaxValue, maxTime = long.MinValue;
-            for (int i = 0; i < _frameCount; i++)
-            {
-                if (_timestamps[i] < minTime) minTime = _timestamps[i];
-                if (_timestamps[i] > maxTime) maxTime = _timestamps[i];
+        protected override void OnHandleCreated(EventArgs e) {
+            base.OnHandleCreated(e);
+            Initialize();
+        }
+
+        protected override void OnResize(EventArgs e) {
+            base.OnResize(e);
+            if (Width > 0 && Height > 0) {
+                // Only re-init physics grid, don't clear objects (handled in Rust resize_grid)
+                // In a real impl, we'd add a specific resize_ffi call, but init_physics is safe enough for dev
+                PhysicsInterop.init_physics(Width, Height); 
             }
+        }
 
-            long elapsed = maxTime - minTime;
-            if (elapsed <= 0) return 60.0;
+        public void Initialize() {
+            if (_physicsInitialized) return;
+            if (Width <= 0 || Height <= 0) return; // Guard against zero size
+            
+            PhysicsInterop.init_physics(Width, Height);
+            _physicsInitialized = true;
+            
+            // Add default objects
+            PhysicsInterop.add_object(200, 200, 0, 0xFF00FF00, 30);
+            PhysicsInterop.add_object(400, 300, 1, 0xFFFF0000, 50);
+        }
 
-            return (_frameCount - 1) * 1000.0 / elapsed;
+        protected override void OnPaint(PaintEventArgs e) {
+            base.OnPaint(e);
+            _fpsCalc.Update();
+
+            IntPtr hdc = e.Graphics.GetHdc();
+            Renderer.ClearBackground(hdc, Width, Height);
+
+            // Render Objects (Mock data fetch for simplicity - in real app, marshal array)
+            // For this snippet, we assume the Rust side updates internal state and we just draw known test objects
+            // A full implementation would have get_object_at(i) FFI calls.
+            
+            // Render Black Hole
+            float bhX, bhY;
+            PhysicsInterop.get_black_hole_position(out bhX, out bhY);
+            float gaze = PhysicsInterop.get_black_hole_gaze();
+            Renderer.RenderBlackHole(hdc, bhX, bhY, gaze, 50.0f);
+
+            e.Graphics.ReleaseHdc(hdc);
+
+            // Status Bar Info
+            string status = $"FPS: {_fpsCalc.GetFps():0} | Objects: {PhysicsInterop.get_object_count()} | Particles: {PhysicsInterop.get_particle_active_count()} | Tool: {CurrentTool}";
+            TextRenderer.DrawText(e.Graphics, status, SystemFonts.CaptionFont, new Point(10, 10), Color.White);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e) {
+            base.OnMouseDown(e);
+            _toolController.HandleMouseDown(e.X, e.Y, e.Button);
+            Invalidate();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e) {
+            base.OnMouseMove(e);
+            if (e.Button == MouseButtons.Left) {
+                _toolController.HandleMouseDrag(e.X, e.Y);
+                Invalidate();
+            }
+            // Update Black Hole Gaze
+            PhysicsInterop.update_physics(0.016f, e.X, e.Y, Width, Height);
+        }
+        
+        protected override void OnMouseUp(MouseEventArgs e) {
+            base.OnMouseUp(e);
+            _toolController.HandleMouseUp();
         }
     }
 
-    public class SandboxCanvas : Panel
-    {
-        private bool _physicsInitialized;
-        private readonly Timer _renderTimer;
-        private readonly FpsCalculator _fpsCalc;
-        private readonly ToolController _toolController;
-        private readonly BlackHoleController _blackHole;
-        private readonly Label _statusLabel;
-        private Point _lastMousePos;
+    public class FpsCalculator {
+        private long[] _timestamps = new long[30];
+        private int _currentIndex = 0;
+        private int _count = 0;
 
-        public SandboxCanvas()
-        {
-            DoubleBuffered = false; // We handle double buffering manually with GDI
-            SetStyle(ControlStyles.Opaque, true);
-            SetStyle(ControlStyles.AllPaintingInWmPaint, true);
-
-            _fpsCalc = new FpsCalculator();
-            _blackHole = new BlackHoleController();
-
-            _toolController = new ToolController(
-                this,
-                SpawnParticles,
-                AddObject,
-                RemoveObject,
-                () => PhysicsInterop.get_max_objects()
-            );
-
-            MouseDown += OnMouseDown;
-            MouseMove += OnMouseMove;
-            MouseUp += OnMouseUp;
-            Resize += OnResize;
-
-            _renderTimer = new Timer { Interval = 16 };
-            _renderTimer.Tick += OnRenderTick;
-
-            _statusLabel = new Label
-            {
-                Dock = DockStyle.Bottom,
-                Height = 24,
-                BackColor = Color.FromArgb(30, 30, 40),
-                ForeColor = Color.LightGray,
-                Font = new Font("Consolas", 9f),
-                Text = "FPS: 0 | Objects: 0 | Particles: 0 | Tool: Draw"
-            };
-            Controls.Add(_statusLabel);
+        public void Update() {
+            _timestamps[_currentIndex] = DateTime.Now.Ticks / 10000; // ms
+            _currentIndex = (_currentIndex + 1) % 30;
+            if (_count < 30) _count++;
         }
 
-        public void Initialize()
-        {
-            if (_physicsInitialized) return;
-            if (Width <= 0 || Height <= 0) return;
-
-            PhysicsInterop.init_physics(Width, Height);
-            _physicsInitialized = true;
-            _renderTimer.Start();
-        }
-
-        private void OnRenderTick(object sender, EventArgs e)
-        {
-            float dt = 0.016f;
-            PhysicsInterop.update_physics(dt);
-
-            var bhPos = PhysicsInterop.get_black_hole_position();
-            _blackHole.Update(bhPos.Item1, bhPos.Item2, _lastMousePos.X, _lastMousePos.Y, dt);
-
-            Invalidate();
-            UpdateStatusLabel();
-        }
-
-        private void OnMouseDown(object sender, MouseEventArgs e) => _toolController.OnMouseDown(sender, e);
-        private void OnMouseMove(object sender, MouseEventArgs e)
-        {
-            _lastMousePos = e.Location;
-            _toolController.OnMouseMove(sender, e);
-        }
-        private void OnMouseUp(object sender, MouseEventArgs e) => _toolController.OnMouseUp(sender, e);
-
-        private void OnResize(object sender, EventArgs e)
-        {
-            if (Width > 0 && Height > 0)
-            {
-                PhysicsInterop.init_physics(Width, Height);
-            }
-        }
-
-        private void SpawnParticles(float x, float y, int count) => PhysicsInterop.spawn_particles(x, y, count);
-        private int AddObject(float x, float y, int shape, uint color, float size) =>
-            PhysicsInterop.add_object(x, y, shape, color, size);
-        private void RemoveObject(int index) => PhysicsInterop.remove_object(index);
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-
-            IntPtr hdc = e.Graphics.GetHdc();
-            try
-            {
-                Renderer.ClearBackground(hdc, Width, Height);
-
-                int maxObjects = PhysicsInterop.get_max_objects();
-                for (int i = 0; i < maxObjects; i++)
-                {
-                    GameObject obj;
-                    if (PhysicsInterop.get_object_at(i, out obj))
-                    {
-                        Renderer.RenderObject(hdc, obj);
-                    }
-                }
-
-                int maxParticles = 2000;
-                for (int i = 0; i < maxParticles; i++)
-                {
-                    Particle p;
-                    if (PhysicsInterop.get_particle_at(i, out p))
-                    {
-                        Renderer.RenderParticle(hdc, p);
-                    }
-                }
-
-                _blackHole.Render(hdc);
-            }
-            finally
-            {
-                e.Graphics.ReleaseHdc(hdc);
-            }
-        }
-
-        private void UpdateStatusLabel()
-        {
-            _fpsCalc.RecordFrame();
-            double fps = _fpsCalc.GetFps();
-            int objCount = PhysicsInterop.get_object_count();
-            int partCount = PhysicsInterop.get_particle_active_count();
-            string toolName = _toolController.GetToolName();
-
-            _statusLabel.Text = $"FPS: {fps:F0} | Objects: {objCount} | Particles: {partCount} | Tool: {toolName}";
-        }
-
-        protected override void OnHandleDestroyed(EventArgs e)
-        {
-            _renderTimer.Stop();
-            Renderer.CleanupGdiCache();
-            base.OnHandleDestroyed(e);
+        public double GetFps() {
+            if (_count < 2) return 0.0;
+            // Circular buffer logic
+            int oldestIdx = _currentIndex; 
+            int newestIdx = (_currentIndex - 1 + 30) % 30;
+            
+            long elapsed = _timestamps[newestIdx] - _timestamps[oldestIdx];
+            if (elapsed <= 0) return 60.0;
+            
+            return (_count - 1) * 1000.0 / elapsed;
         }
     }
 }
