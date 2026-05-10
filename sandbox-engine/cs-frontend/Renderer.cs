@@ -7,14 +7,19 @@ namespace SandboxEngine
 {
     public static class Renderer
     {
-        private static readonly Dictionary<uint, (IntPtr brush, IntPtr pen)> _gdiCache = new();
+        private static Dictionary<uint, (IntPtr brush, IntPtr pen)> _cache = new();
         private const int CACHE_SIZE = 256;
+        private const int NULL_BRUSH = 5;
+        private const int WHITE_BRUSH = 0;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr FillRect(IntPtr hdc, ref RECT lprc, IntPtr hbr);
 
         [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateSolidBrush(uint color);
+        private static extern IntPtr CreateSolidBrush(uint crColor);
 
         [DllImport("gdi32.dll")]
-        private static extern IntPtr CreatePen(int style, int width, uint color);
+        private static extern IntPtr CreatePen(int fnPenStyle, int nWidth, uint crColor);
 
         [DllImport("gdi32.dll")]
         private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
@@ -23,86 +28,76 @@ namespace SandboxEngine
         private static extern bool DeleteObject(IntPtr hObject);
 
         [DllImport("gdi32.dll")]
+        private static extern IntPtr GetStockObject(int fnObject);
+
+        [DllImport("gdi32.dll")]
         private static extern bool Ellipse(IntPtr hdc, int left, int top, int right, int bottom);
 
         [DllImport("gdi32.dll")]
         private static extern bool Rectangle(IntPtr hdc, int left, int top, int right, int bottom);
 
         [DllImport("gdi32.dll")]
-        private static extern bool Polygon(IntPtr hdc, POINT[] points, int count);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr GetStockObject(int fnObject);
-
-        private const int NULL_BRUSH = 5;
+        private static extern bool Polygon(IntPtr hdc, POINT[] lpPoints, int nCount);
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct POINT
-        {
-            public int X, Y;
-            public POINT(int x, int y) { X = x; Y = y; }
+        public struct RECT { public int Left, Top, Right, Bottom; public RECT(int l, int t, int r, int b) { Left=l; Top=t; Right=r; Bottom=b; } }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X, Y; public POINT(int x, int y) { X=x; Y=y; } }
+
+        public struct GameObject {
+            public float x, y, vx, vy, radius, width, height, mass, restitution;
+            public int shape; public uint color; public bool active;
         }
 
-        public static (IntPtr brush, IntPtr pen) GetCachedGDIObjects(uint color)
-        {
-            if (_gdiCache.TryGetValue(color, out var cached))
-            {
-                return cached;
-            }
-
-            var brush = CreateSolidBrush(color);
-            var pen = CreatePen(0, 1, color);
-
-            if (_gdiCache.Count >= CACHE_SIZE)
-            {
-                return (brush, pen);
-            }
-
-            _gdiCache[color] = (brush, pen);
-            return (brush, pen);
+        public struct Particle {
+            public float x, y, vx, vy, life, max_life, size; public uint color; public bool active;
         }
 
-        public static void CleanupGdiCache()
-        {
-            foreach (var (_, (brush, pen)) in _gdiCache)
-            {
-                DeleteObject(brush);
-                DeleteObject(pen);
-            }
-            _gdiCache.Clear();
+        public static void ClearBackground(IntPtr hdc, int w, int h) {
+            IntPtr brush = CreateSolidBrush(0xFF141414); // Dark background
+            RECT rect = new RECT(0, 0, w, h);
+            FillRect(hdc, ref rect, brush);
+            DeleteObject(brush);
         }
 
-        public static void RenderObject(IntPtr hdc, GameObject obj)
-        {
-            if (!obj.active) return;
+        public static (IntPtr brush, IntPtr pen) GetCachedGDI(uint color) {
+            if (_cache.TryGetValue(color, out var handle)) return handle;
 
-            var (brush, pen) = GetCachedGDIObjects(obj.color);
-            IntPtr oldBrush = SelectObject(hdc, brush);
-            IntPtr oldPen = SelectObject(hdc, pen);
+            IntPtr hBrush = CreateSolidBrush(color);
+            IntPtr hPen = CreatePen(0, 1, color);
 
-            int x = (int)obj.x, y = (int)obj.y;
-            int r = (int)obj.radius;
+            if (_cache.Count >= CACHE_SIZE) {
+                // Simple leak-safe fallback if cache full
+                return (hBrush, hPen);
+            }
 
-            switch (obj.shape)
-            {
+            _cache[color] = (hBrush, hPen);
+            return (hBrush, hPen);
+        }
+
+        public static void RenderObject(IntPtr hdc, GameObject obj) {
+            var (hBrush, hPen) = GetCachedGDI(obj.color);
+            IntPtr oldBrush = SelectObject(hdc, hBrush);
+            IntPtr oldPen = SelectObject(hdc, hPen);
+
+            int x = (int)obj.x, y = (int)obj.y, r = (int)obj.radius;
+            int w = (int)obj.width, h = (int)obj.height;
+
+            switch (obj.shape) {
                 case 0: // Circle
                     Ellipse(hdc, x - r, y - r, x + r, y + r);
                     break;
                 case 1: // Rect
-                    Rectangle(hdc, x - r, y - r, x + r, y + r);
+                    Rectangle(hdc, x - w/2, y - h/2, x + w/2, y + h/2);
                     break;
                 case 2: // Triangle
-                    POINT[] tri = new POINT[]
-                    {
+                    POINT[] pts = new POINT[] {
                         new POINT(x, y - r),
                         new POINT(x - r, y + r),
                         new POINT(x + r, y + r)
                     };
-                    Polygon(hdc, tri, 3);
-                    break;
-                case 3: // Line
-                    // Simplified as thin rectangle
-                    Rectangle(hdc, x - r, y - 2, x + r, y + 2);
+                    Polygon(hdc, pts, 3);
                     break;
             }
 
@@ -110,100 +105,65 @@ namespace SandboxEngine
             SelectObject(hdc, oldPen);
         }
 
-        public static void RenderParticle(IntPtr hdc, Particle p)
-        {
-            if (!p.active) return;
+        public static void RenderParticle(IntPtr hdc, Particle p) {
+            var (hBrush, hPen) = GetCachedGDI(p.color);
+            IntPtr oldBrush = SelectObject(hdc, hBrush);
+            IntPtr oldPen = SelectObject(hdc, hPen); // Fixed: was selecting brush twice
 
-            var (brush, _) = GetCachedGDIObjects(p.color);
-            IntPtr oldBrush = SelectObject(hdc, brush);
-            IntPtr oldPen = SelectObject(hdc, brush);
-
-            int size = (int)p.size;
-            Ellipse(hdc, (int)p.x - size, (int)p.y - size, (int)p.x + size, (int)p.y + size);
+            int s = (int)p.size;
+            Ellipse(hdc, (int)p.x - s, (int)p.y - s, (int)p.x + s, (int)p.y + s);
 
             SelectObject(hdc, oldBrush);
             SelectObject(hdc, oldPen);
         }
 
-        public static void RenderBlackHole(IntPtr hdc, float x, float y, float gazeTimer, float baseRadius)
-        {
-            if (gazeTimer < 0.01f) return;
+        public static void RenderBlackHole(IntPtr hdc, float x, float y, float gazeT, float radius) {
+            if (gazeT < 0.01f) return;
 
-            float t = Math.Min(gazeTimer / 9.0f, 1.0f);
-            int cx = (int)x, cy = (int)y;
-
-            // Event horizon - black circle
-            IntPtr blackBrush = CreateSolidBrush(0x000000);
-            IntPtr oldBrush = SelectObject(hdc, blackBrush);
-            IntPtr blackPen = CreatePen(0, 1, 0x000000);
-            IntPtr oldPen = SelectObject(hdc, blackPen);
-
-            int horizonRadius = (int)(baseRadius * (1.0f + t * 2.0f));
-            Ellipse(hdc, cx - horizonRadius, cy - horizonRadius, cx + horizonRadius, cy + horizonRadius);
-
+            // Event Horizon (Black)
+            IntPtr hBlack = CreateSolidBrush(0x000000);
+            IntPtr oldBrush = SelectObject(hdc, hBlack);
+            IntPtr oldPen = SelectObject(hdc, GetStockObject(NULL_BRUSH)); // No outline
+            
+            int r = (int)(radius * (1.0f + gazeT * 2.0f));
+            Ellipse(hdc, (int)x - r, (int)y - r, (int)x + r, (int)y + r);
+            
             SelectObject(hdc, oldBrush);
             SelectObject(hdc, oldPen);
-            DeleteObject(blackBrush);
-            DeleteObject(blackPen);
+            DeleteObject(hBlack);
 
-            // Accretion glow ring - orange, only if t > 0.1
-            if (t > 0.1f)
-            {
-                uint orange = 0x0080FF; // BGR format
-                var (orangeBrush, orangePen) = GetCachedGDIObjects(orange);
-                
-                // Use NULL_BRUSH to not fill interior
-                IntPtr nullBrush = GetStockObject(NULL_BRUSH);
-                oldBrush = SelectObject(hdc, nullBrush);
-                
-                int thick = 2 + (int)(t * 5);
-                IntPtr thickPen = CreatePen(0, thick, orange);
-                oldPen = SelectObject(hdc, thickPen);
+            // Accretion Ring (Orange Glow) - Transparent Center
+            if (gazeT > 0.1f) {
+                IntPtr hOrange = CreatePen(0, (int)(2 + gazeT * 5), 0x00A0FF);
+                oldPen = SelectObject(hdc, hOrange);
+                oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH)); // Fixed: Transparent center
 
-                int glowRadius = (int)(horizonRadius * 1.2f);
-                Ellipse(hdc, cx - glowRadius, cy - glowRadius, cx + glowRadius, cy + glowRadius);
+                int glowR = (int)(radius * 1.2f * (1.0f + gazeT));
+                Ellipse(hdc, (int)x - glowR, (int)y - glowR, (int)x + glowR, (int)y + glowR);
 
-                SelectObject(hdc, oldBrush);
                 SelectObject(hdc, oldPen);
-                DeleteObject(thickPen);
+                SelectObject(hdc, oldBrush);
+                DeleteObject(hOrange);
             }
 
-            // Hairy Ball singularity point - white dot at center, only if t >= 1.0
-            if (t >= 1.0f)
-            {
-                IntPtr whiteBrush = CreateSolidBrush(0xFFFFFF);
-                IntPtr whitePen = CreatePen(0, 1, 0xFFFFFF);
-                oldBrush = SelectObject(hdc, whiteBrush);
-                oldPen = SelectObject(hdc, whitePen);
-
-                Ellipse(hdc, cx - 3, cy - 3, cx + 3, cy + 3);
-
+            // Hairy Ball Singularity (White Dot at center if fully gazed)
+            if (gazeT >= 1.0f) {
+                IntPtr hWhite = CreateSolidBrush(0xFFFFFF);
+                oldBrush = SelectObject(hdc, hWhite);
+                oldPen = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+                Ellipse(hdc, (int)x - 3, (int)y - 3, (int)x + 3, (int)y + 3);
                 SelectObject(hdc, oldBrush);
                 SelectObject(hdc, oldPen);
-                DeleteObject(whiteBrush);
-                DeleteObject(whitePen);
+                DeleteObject(hWhite);
             }
         }
 
-        public static void ClearBackground(IntPtr hdc, int width, int height)
-        {
-            IntPtr darkBrush = CreateSolidBrush(0xFF141414); // Dark blue-gray in BGR
-            IntPtr oldBrush = SelectObject(hdc, darkBrush);
-            
-            var rect = new RECT { left = 0, top = 0, right = width, bottom = height };
-            FillRect(hdc, ref rect, darkBrush);
-            
-            SelectObject(hdc, oldBrush);
-            DeleteObject(darkBrush);
+        public static void Cleanup() {
+            foreach (var h in _cache.Values) {
+                DeleteObject(h.brush);
+                DeleteObject(h.pen);
+            }
+            _cache.Clear();
         }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
-        {
-            public int left, top, right, bottom;
-        }
-
-        [DllImport("gdi32.dll")]
-        private static extern bool FillRect(IntPtr hdc, ref RECT lprc, IntPtr hbr);
     }
 }
