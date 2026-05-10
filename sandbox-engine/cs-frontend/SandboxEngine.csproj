@@ -1,13 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
-    <ImplicitUsings>disable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
   </PropertyGroup>
-
+  <ItemGroup>
+    <!-- OpenTK 4.x with WinForms GLControl -->
+    <PackageReference Include="OpenTK"          Version="4.9.3" />
+    <PackageReference Include="OpenTK.WinForms" Version="4.0.0-pre.5" />
+  </ItemGroup>
+  <!-- Copy sandbox_core.dll to output directory -->
+  <ItemGroup>
+    <Content Include="sandbox_core.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>
