@@ -1,14 +1,16 @@
 [package]
 name = "sandbox_core"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-# No external dependencies - pure std lib for maximum compatibility
+# No external dependencies — RwLock and OnceLock are in std
 
 [profile.release]
-opt-level = 3
-lto = true
+opt-level   = 3
+lto         = "thin"       # Thin LTO: faster build than full LTO, still good perf
+codegen-units = 1
+panic       = "abort"      # Smaller binary, no unwinding overhead
